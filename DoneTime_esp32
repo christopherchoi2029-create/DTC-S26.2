@@ -1,0 +1,379 @@
+#include <SPI.h>
+#include <MFRC522.h>
+#include <TM1637Display.h>
+
+// =====================
+// DISPLAY
+// =====================
+
+#define CLK 21
+#define DIO 22
+
+TM1637Display display(CLK, DIO);
+
+// =====================
+// RFID
+// =====================
+
+#define SS_PIN 5
+#define RST_PIN 27
+
+MFRC522 mfrc522(SS_PIN, RST_PIN);
+
+// =====================
+// INPUTS
+// =====================
+
+#define VIBRATION_PIN 4
+#define BUTTON_PIN 13
+
+// =====================
+// SETTINGS
+// =====================
+
+// Testing
+const unsigned long SAMPLE_WINDOW = 3000;
+
+// Final:
+// const unsigned long SAMPLE_WINDOW = 60000;
+
+const float START_RATIO = 2.0;
+const float FINISH_RATIO = 0.20;
+
+// 5 minutes
+const unsigned long GRACE_PERIOD = 300000;
+
+// Testing
+// const unsigned long GRACE_PERIOD = 30000;
+
+String currentUser = "";
+String currentPhone = "";
+
+bool graceExpired = false;
+
+// =====================
+// STATES
+// =====================
+
+enum State
+{
+  WAITING_FOR_CARD,
+  WAITING_FOR_START,
+  RUNNING,
+  FINISHED
+};
+
+State currentState = WAITING_FOR_CARD;
+
+// =====================
+// VARIABLES
+// =====================
+
+int pulseCount = 0;
+int previousState = LOW;
+
+unsigned long windowStartTime = 0;
+unsigned long finishTime = 0;
+
+int baselinePulseCount = 0;
+int runningPulseCount = 0;
+
+// =====================
+// RFID USER LOOKUP
+// =====================
+
+void identifyUser()
+{
+  String uidString = "";
+
+  for (byte i = 0; i < mfrc522.uid.size; i++)
+  {
+    uidString += String(mfrc522.uid.uidByte[i], HEX);
+  }
+
+  uidString.toUpperCase();
+
+  Serial.print("UID: ");
+  Serial.println(uidString);
+
+  // ===== USER 1 =====
+
+  if (uidString == "7D59D4")
+  {
+    currentUser = "Chris";
+    currentPhone = "123-456-7890";
+  }
+
+  // ===== USER 2 =====
+
+  else if (uidString == "3B2C6E5")
+  {
+    currentUser = "Kevin";
+    currentPhone = "012-345-6789";
+  }
+
+  // ===== UNKNOWN =====
+
+  else
+  {
+    currentUser = "Unknown User";
+    currentPhone = "Unknown";
+  }
+
+  Serial.print("Registered User: ");
+  Serial.println(currentUser);
+
+  Serial.print("Phone Number: ");
+  Serial.println(currentPhone);
+}
+
+// =====================
+
+void sendNotification()
+{
+  Serial.println();
+  Serial.println("==================================");
+  Serial.println("SMS NOTIFICATION SENT");
+  Serial.println("==================================");
+
+  Serial.print("TO: ");
+  Serial.println(currentPhone);
+
+  Serial.println();
+
+  Serial.print("Hello ");
+  Serial.print(currentUser);
+  Serial.println(",");
+
+  Serial.println("Your laundry cycle is complete.");
+  Serial.println("You have 5 minutes to retrieve");
+  Serial.println("your laundry before the");
+  Serial.println("grace period expires.");
+
+  Serial.println("==================================");
+  Serial.println();
+}
+
+// =====================
+
+void resetSystem()
+{
+  currentState = WAITING_FOR_CARD;
+
+  pulseCount = 0;
+
+  baselinePulseCount = 0;
+  runningPulseCount = 0;
+
+  windowStartTime = 0;
+  finishTime = 0;
+
+  currentUser = "";
+  currentPhone = "";
+
+  graceExpired = false;
+
+  Serial.println();
+  Serial.println("System Reset");
+  Serial.println("Waiting for RFID...");
+  Serial.println();
+}
+
+// =====================
+
+void setup()
+{
+  pinMode(VIBRATION_PIN, INPUT);
+
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  Serial.begin(115200);
+
+  display.setBrightness(7);
+
+  SPI.begin();
+
+  mfrc522.PCD_Init();
+
+  Serial.println("System Ready");
+  Serial.println("Waiting for RFID...");
+}
+
+// =====================
+
+void loop()
+{
+  int vibration = digitalRead(VIBRATION_PIN);
+
+  if (vibration == HIGH)
+  {
+    pulseCount++;
+  }
+
+  previousState = vibration;
+
+  // ==================================
+  // WAITING FOR RFID
+  // ==================================
+
+  if (currentState == WAITING_FOR_CARD)
+  {
+    display.showNumberDec(0, true);
+
+    if (mfrc522.PICC_IsNewCardPresent() &&
+        mfrc522.PICC_ReadCardSerial())
+    {
+      Serial.println();
+      Serial.println("RFID SCANNED");
+
+      identifyUser();
+
+      pulseCount = 0;
+
+      windowStartTime = millis();
+
+      currentState = WAITING_FOR_START;
+
+      mfrc522.PICC_HaltA();
+
+      Serial.println("Collecting baseline vibrations...");
+    }
+
+    return;
+  }
+
+  // ==================================
+  // WAITING FOR START
+  // ==================================
+
+  if (currentState == WAITING_FOR_START)
+  {
+    display.showNumberDec(2222);
+
+    if (millis() - windowStartTime >= SAMPLE_WINDOW)
+    {
+      baselinePulseCount = pulseCount;
+
+      Serial.print("Baseline Pulses: ");
+      Serial.println(baselinePulseCount);
+
+      pulseCount = 0;
+
+      windowStartTime = millis();
+
+      currentState = RUNNING;
+
+      Serial.println("Monitoring for machine start...");
+    }
+
+    return;
+  }
+
+  // ==================================
+  // RUNNING
+  // ==================================
+
+  if (currentState == RUNNING)
+  {
+    display.showNumberDec(1111);
+
+    if (millis() - windowStartTime >= SAMPLE_WINDOW)
+    {
+      Serial.print("Current Pulses: ");
+      Serial.println(pulseCount);
+
+      if (runningPulseCount == 0)
+      {
+        if (pulseCount >
+            baselinePulseCount * START_RATIO)
+        {
+          runningPulseCount = pulseCount;
+
+          Serial.println();
+          Serial.println("MACHINE STARTED");
+          Serial.println();
+        }
+      }
+      else
+      {
+        if (pulseCount <
+            runningPulseCount * FINISH_RATIO)
+        {
+          currentState = FINISHED;
+
+          finishTime = millis();
+
+          Serial.println();
+          Serial.println("LAUNDRY FINISHED");
+          Serial.println();
+
+          sendNotification();
+        }
+        else
+        {
+          runningPulseCount =
+            (runningPulseCount + pulseCount) / 2;
+        }
+      }
+
+      pulseCount = 0;
+
+      windowStartTime = millis();
+    }
+
+    return;
+  }
+
+  // ==================================
+  // FINISHED
+  // ==================================
+
+  if (currentState == FINISHED)
+  {
+    unsigned long elapsedSeconds =
+      (millis() - finishTime) / 1000;
+
+    int minutes = elapsedSeconds / 60;
+    int seconds = elapsedSeconds % 60;
+
+    int displayValue =
+      minutes * 100 + seconds;
+
+    display.showNumberDecEx(
+      displayValue,
+      0b01000000,
+      true);
+
+    if (!graceExpired &&
+        millis() - finishTime >= GRACE_PERIOD)
+    {
+      graceExpired = true;
+
+      Serial.println();
+      Serial.println("==================================");
+      Serial.println("GRACE PERIOD EXPIRED");
+      Serial.println("Machine Available");
+      Serial.println("==================================");
+      Serial.println();
+    }
+
+    // Button ONLY works after finish
+
+    if (digitalRead(BUTTON_PIN) == LOW)
+    {
+      delay(50);
+
+      if (digitalRead(BUTTON_PIN) == LOW)
+      {
+        Serial.println("RESET BUTTON PRESSED");
+
+        resetSystem();
+
+        while (digitalRead(BUTTON_PIN) == LOW)
+        {
+          delay(10);
+        }
+      }
+    }
+  }
+}
