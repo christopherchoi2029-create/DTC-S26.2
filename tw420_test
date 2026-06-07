@@ -1,0 +1,46 @@
+#define VIBRATION_PIN 4
+
+int pulseCount = 0;
+int previousState = LOW;
+
+unsigned long windowStartTime = 0;
+
+const unsigned long SAMPLE_WINDOW = 10000; // 10 seconds
+
+void setup()
+{
+  pinMode(VIBRATION_PIN, INPUT);
+
+  Serial.begin(115200);
+
+  windowStartTime = millis();
+
+  Serial.println("Vibration Pulse Test");
+  Serial.println("Using same pulse detection as laundry code");
+}
+
+void loop()
+{
+  int vibration = digitalRead(VIBRATION_PIN);
+
+  // EXACT same pulse detection as laundry code
+  if (vibration == HIGH && previousState == LOW)
+  {
+    pulseCount++;
+  }
+
+  previousState = vibration;
+
+  // Every 10 seconds report results
+  if (millis() - windowStartTime >= SAMPLE_WINDOW)
+  {
+    Serial.print("Pulses in last 10 seconds: ");
+    Serial.println(pulseCount);
+
+    pulseCount = 0;
+
+    windowStartTime = millis();
+  }
+
+  delay(1);
+}
