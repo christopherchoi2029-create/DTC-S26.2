@@ -3,7 +3,7 @@
 #include <TM1637Display.h>
 
 // =====================
-// DISPLAY
+// DISPLAY PINS
 // =====================
 
 #define CLK 21
@@ -12,7 +12,7 @@
 TM1637Display display(CLK, DIO);
 
 // =====================
-// RFID
+// RFID PINS
 // =====================
 
 #define SS_PIN 5
@@ -21,7 +21,7 @@ TM1637Display display(CLK, DIO);
 MFRC522 mfrc522(SS_PIN, RST_PIN);
 
 // =====================
-// INPUTS
+// INPUTS PINS
 // =====================
 
 #define VIBRATION_PIN 4
@@ -203,6 +203,7 @@ void setup()
 
 void loop()
 {
+// Read the vibration sensor. Each HIGH reading from the sensor is counted as a pulse.
   int vibration = digitalRead(VIBRATION_PIN);
 
   if (vibration == HIGH)
@@ -215,6 +216,7 @@ void loop()
   // ==================================
   // WAITING FOR RFID
   // ==================================
+  // System is idle until an registered RFID card is scanned
 
   if (currentState == WAITING_FOR_CARD)
   {
@@ -252,6 +254,7 @@ void loop()
 
     if (millis() - windowStartTime >= SAMPLE_WINDOW)
     {
+  // Store the current vibration level as the baseline, so that system can compare future readings
       baselinePulseCount = pulseCount;
 
       Serial.print("Baseline Pulses: ");
@@ -284,6 +287,7 @@ void loop()
 
       if (runningPulseCount == 0)
       {
+        // Detect machine cycle start
         if (pulseCount >
             baselinePulseCount * START_RATIO)
         {
@@ -296,11 +300,13 @@ void loop()
       }
       else
       {
+      // Detect machine cycle end 
         if (pulseCount <
             runningPulseCount * FINISH_RATIO)
         {
           currentState = FINISHED;
 
+          // Record time at cycle completion 
           finishTime = millis();
 
           Serial.println();
@@ -330,6 +336,7 @@ void loop()
 
   if (currentState == FINISHED)
   {
+    // Converts elapsed time into MM:SS format for display
     unsigned long elapsedSeconds =
       (millis() - finishTime) / 1000;
 
@@ -344,6 +351,7 @@ void loop()
       0b01000000,
       true);
 
+    // Once the grace period has passed, marks the machine as available
     if (!graceExpired &&
         millis() - finishTime >= GRACE_PERIOD)
     {
